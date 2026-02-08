@@ -90,13 +90,19 @@ def main():
         print("Make sure you're logged into LinkedIn in Brave.", file=sys.stderr)
         sys.exit(1)
 
+    jsessionid = cookies["JSESSIONID"].strip('"')
+    li_at = cookies["li_at"]
+
     if "--env" in sys.argv:
-        jsessionid = cookies["JSESSIONID"].strip('"')
         print(f'LINKEDIN_JSESSIONID="{jsessionid}"')
-        print(f'LINKEDIN_LI_AT="{cookies["li_at"]}"')
+        print(f'LINKEDIN_LI_AT="{li_at}"')
     else:
         print(f"JSESSIONID: {cookies['JSESSIONID']}")
-        print(f"li_at:      {cookies['li_at'][:20]}...{cookies['li_at'][-10:]}")
+        print(f"li_at:      {li_at[:20]}...{li_at[-10:]}")
+
+        clip = f'JSESSIONID="{jsessionid}"\nli_at={li_at}'
+        subprocess.run(["pbcopy"], input=clip.encode(), check=True)
+        print("\nCopied to clipboard.")
 
 
 if __name__ == "__main__":
