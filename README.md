@@ -1,6 +1,6 @@
 # LinkedIn Feed Scraper
 
-Fetches posts from your LinkedIn feed and stores them in a local SQLite database for later processing.
+Fetches posts from your LinkedIn feed and stores them in a local SQLite database. Used with [OpenClaw](https://github.com/openclaw) to generate daily LinkedIn briefings — posts are fetched 3 times a day and a briefing is generated once a day with must-reads, engagement suggestions, and content opportunities.
 
 ## Setup
 
