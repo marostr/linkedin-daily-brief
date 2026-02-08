@@ -11,6 +11,8 @@ from linkedin_api import Linkedin
 from requests.cookies import RequestsCookieJar
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "linkedin_feed.db")
+BATCH_SIZE = 50
+DEFAULT_LIMIT = 200
 
 
 def estimate_posted_at(old_text, fetched_at):
@@ -154,17 +156,47 @@ def get_fetch_log(db_path=DEFAULT_DB_PATH):
     return [dict(row) for row in rows]
 
 
-def fetch_feed(jsessionid, li_at, limit=200):
-    """Authenticate via cookies and return feed posts."""
+def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT):
+    """Fetch feed posts in batches of BATCH_SIZE.
+
+    Accepts a callable (e.g. api.get_feed_posts) to allow testing
+    without hitting the real API. Stops early if a batch returns
+    fewer posts than requested.
+    """
+    all_posts = []
+    offset = 0
+
+    while len(all_posts) < limit:
+        batch = get_feed_posts_fn(limit=BATCH_SIZE, offset=offset)
+        all_posts.extend(batch)
+        offset += BATCH_SIZE
+
+        if len(batch) < BATCH_SIZE:
+            break
+
+    return all_posts[:limit]
+
+
+def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
+    """Authenticate via cookies and return feed posts in batches."""
     jar = RequestsCookieJar()
     jar.set("JSESSIONID", f'"{jsessionid}"', domain=".linkedin.com")
     jar.set("li_at", li_at, domain=".linkedin.com")
 
     api = Linkedin("", "", cookies=jar)
-    return api.get_feed_posts(limit=limit)
+    return fetch_feed_batched(api.get_feed_posts, limit=limit)
 
 
 def main():
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Fetch LinkedIn feed posts")
+    parser.add_argument(
+        "limit", nargs="?", type=int, default=DEFAULT_LIMIT,
+        help=f"Number of posts to fetch (default: {DEFAULT_LIMIT})",
+    )
+    args = parser.parse_args()
+
     jsessionid = os.environ.get("LINKEDIN_JSESSIONID")
     li_at = os.environ.get("LINKEDIN_LI_AT")
 
@@ -178,7 +210,7 @@ def main():
     db_path = os.environ.get("LINKEDIN_DB_PATH", DEFAULT_DB_PATH)
     init_db(db_path)
 
-    posts = fetch_feed(jsessionid, li_at)
+    posts = fetch_feed(jsessionid, li_at, limit=args.limit)
     new_count = store_posts(db_path, posts)
     log_fetch(db_path, fetched=len(posts), inserted=new_count)
     unprocessed = get_unprocessed(db_path)
