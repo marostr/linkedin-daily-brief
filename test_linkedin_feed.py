@@ -1,5 +1,57 @@
 import sqlite3
-from linkedin_feed import init_db, store_posts, get_unprocessed, mark_processed
+from datetime import datetime, timezone, timedelta
+from linkedin_feed import (
+    init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
+)
+
+
+class TestEstimatePostedAt:
+    def test_minutes(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("14m", now)
+        assert result == datetime(2026, 2, 8, 11, 46, 0, tzinfo=timezone.utc)
+
+    def test_hours(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("3h", now)
+        assert result == datetime(2026, 2, 8, 9, 0, 0, tzinfo=timezone.utc)
+
+    def test_days(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("2d", now)
+        assert result == datetime(2026, 2, 6, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_weeks(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("1w", now)
+        assert result == datetime(2026, 2, 1, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_months(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("2 mo", now)
+        # 2 * 30 = 60 days back from Feb 8 = Dec 10 (approximate)
+        assert result == datetime(2025, 12, 10, 12, 0, 0, tzinfo=timezone.utc)
+
+    def test_strips_suffixes(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("5h • Edited • 2nd", now)
+        assert result == datetime(2026, 2, 8, 7, 0, 0, tzinfo=timezone.utc)
+
+    def test_just_now_returns_fetched_at(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("Just now", now)
+        assert result == now
+
+    def test_unparseable_returns_none(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        assert estimate_posted_at("", now) is None
+        assert estimate_posted_at(None, now) is None
+        assert estimate_posted_at("None", now) is None
+
+    def test_seconds(self):
+        now = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc)
+        result = estimate_posted_at("30s", now)
+        assert result == datetime(2026, 2, 8, 11, 59, 30, tzinfo=timezone.utc)
 
 
 class TestInitDb:
@@ -7,10 +59,11 @@ class TestInitDb:
         db = str(tmp_path / "test.db")
         init_db(db)
         conn = sqlite3.connect(db)
-        cursor = conn.execute("SELECT name FROM sqlite_master WHERE type='table'")
-        tables = [row[0] for row in cursor]
+        cursor = conn.execute("PRAGMA table_info(posts)")
+        columns = [row[1] for row in cursor]
         conn.close()
-        assert "posts" in tables
+        assert "posted_at" in columns
+        assert "old" not in columns
 
 
 class TestStorePosts:
@@ -24,6 +77,20 @@ class TestStorePosts:
         ]
         count = store_posts(db, posts)
         assert count == 1
+
+    def test_computes_posted_at_from_old(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        posts = [
+            {"url": "https://linkedin.com/feed/update/urn:li:activity:1",
+             "author_name": "Alice", "author_profile": "", "content": "A", "old": "2h"},
+        ]
+        store_posts(db, posts)
+        result = get_unprocessed(db)
+        # posted_at should be an ISO timestamp, roughly 2h before now
+        posted_at = datetime.fromisoformat(result[0]["posted_at"])
+        age = datetime.now(timezone.utc) - posted_at
+        assert timedelta(hours=1, minutes=50) < age < timedelta(hours=2, minutes=10)
 
     def test_skips_duplicate_urls(self, tmp_path):
         db = str(tmp_path / "test.db")

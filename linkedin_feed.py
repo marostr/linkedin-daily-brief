@@ -2,14 +2,54 @@
 
 import json
 import os
+import re
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from linkedin_api import Linkedin
 from requests.cookies import RequestsCookieJar
 
 DEFAULT_DB_PATH = os.path.join(os.path.dirname(__file__), "linkedin_feed.db")
+
+
+def estimate_posted_at(old_text, fetched_at):
+    """Convert a relative age string like '2h' into an absolute datetime.
+
+    Returns None if the string can't be parsed.
+    """
+    if not old_text or old_text == "None":
+        return None
+
+    time_part = old_text.split("•")[0].strip()
+
+    match = re.match(r"(\d+)\s*(mo|min|mi|yr|hr|s|m|h|d|w)", time_part, re.IGNORECASE)
+    if not match:
+        if "now" in time_part.lower() or "just" in time_part.lower():
+            return fetched_at
+        return None
+
+    value = int(match.group(1))
+    unit = match.group(2).lower()
+
+    if unit == "s":
+        delta = timedelta(seconds=value)
+    elif unit in ("m", "mi", "min"):
+        delta = timedelta(minutes=value)
+    elif unit in ("h", "hr"):
+        delta = timedelta(hours=value)
+    elif unit == "d":
+        delta = timedelta(days=value)
+    elif unit == "w":
+        delta = timedelta(weeks=value)
+    elif unit == "mo":
+        delta = timedelta(days=value * 30)
+    elif unit == "yr":
+        delta = timedelta(days=value * 365)
+    else:
+        return None
+
+    return fetched_at - delta
 
 
 def init_db(db_path=DEFAULT_DB_PATH):
@@ -21,7 +61,7 @@ def init_db(db_path=DEFAULT_DB_PATH):
             author_name TEXT,
             author_profile TEXT,
             content TEXT,
-            old TEXT,
+            posted_at TEXT,
             fetched_at TEXT NOT NULL,
             processed INTEGER NOT NULL DEFAULT 0
         )
@@ -33,19 +73,24 @@ def init_db(db_path=DEFAULT_DB_PATH):
 def store_posts(db_path, posts):
     """Insert new posts into the database. Returns count of newly inserted posts."""
     conn = sqlite3.connect(db_path)
-    now = datetime.now(timezone.utc).isoformat()
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
     inserted = 0
 
     for p in posts:
         url = p.get("url")
         if not url:
             continue
+
+        posted_at = estimate_posted_at(p.get("old", ""), now)
+        posted_at_iso = posted_at.isoformat() if posted_at else None
+
         try:
             conn.execute(
-                "INSERT INTO posts (url, author_name, author_profile, content, old, fetched_at) "
+                "INSERT INTO posts (url, author_name, author_profile, content, posted_at, fetched_at) "
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (url, p.get("author_name", ""), p.get("author_profile", ""),
-                 p.get("content", ""), p.get("old", ""), now),
+                 p.get("content", ""), posted_at_iso, now_iso),
             )
             inserted += 1
         except sqlite3.IntegrityError:
@@ -61,7 +106,7 @@ def get_unprocessed(db_path=DEFAULT_DB_PATH):
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
-        "SELECT url, author_name, author_profile, content, old, fetched_at "
+        "SELECT url, author_name, author_profile, content, posted_at, fetched_at "
         "FROM posts WHERE processed = 0 ORDER BY rowid"
     ).fetchall()
     conn.close()
