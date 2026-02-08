@@ -248,20 +248,39 @@ class TestFetchFeedBatched:
         assert [c["offset"] for c in calls] == [0, 50, 100]
         assert len(posts) == 150
 
-    def test_stops_early_when_api_returns_fewer_than_batch(self):
+    def test_keeps_fetching_when_batch_is_partial(self):
         calls = []
 
         def fake_get_feed_posts(limit, offset, exclude_promoted_posts=True):
             calls.append({"limit": limit, "offset": offset})
             if offset == 50:
+                # partial batch (e.g. promoted posts filtered out)
                 return [{"url": "https://linkedin.com/feed/update/urn:li:activity:99",
                           "author_name": "Last", "author_profile": "",
                           "content": "Last post", "old": "1d"}]
+            if offset == 100:
+                return []  # truly exhausted
             return [{"url": f"https://linkedin.com/feed/update/urn:li:activity:{offset + i}",
                       "author_name": f"A{offset + i}", "author_profile": "",
                       "content": f"P{offset + i}", "old": "1h"}
                      for i in range(limit)]
 
         posts = fetch_feed_batched(fake_get_feed_posts, limit=200)
-        assert len(calls) == 2  # stopped after partial second batch
+        assert len(calls) == 3  # kept going past partial batch
         assert len(posts) == 51
+
+    def test_stops_when_api_returns_empty(self):
+        calls = []
+
+        def fake_get_feed_posts(limit, offset, exclude_promoted_posts=True):
+            calls.append({"limit": limit, "offset": offset})
+            if offset >= 50:
+                return []
+            return [{"url": f"https://linkedin.com/feed/update/urn:li:activity:{offset + i}",
+                      "author_name": f"A{offset + i}", "author_profile": "",
+                      "content": f"P{offset + i}", "old": "1h"}
+                     for i in range(limit)]
+
+        posts = fetch_feed_batched(fake_get_feed_posts, limit=200)
+        assert len(calls) == 2
+        assert len(posts) == 50

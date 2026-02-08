@@ -160,19 +160,17 @@ def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT):
     """Fetch feed posts in batches of BATCH_SIZE.
 
     Accepts a callable (e.g. api.get_feed_posts) to allow testing
-    without hitting the real API. Stops early if a batch returns
-    fewer posts than requested.
+    without hitting the real API. Stops when the API returns zero posts.
     """
     all_posts = []
     offset = 0
 
     while len(all_posts) < limit:
         batch = get_feed_posts_fn(limit=BATCH_SIZE, offset=offset)
+        if not batch:
+            break
         all_posts.extend(batch)
         offset += BATCH_SIZE
-
-        if len(batch) < BATCH_SIZE:
-            break
 
     return all_posts[:limit]
 
