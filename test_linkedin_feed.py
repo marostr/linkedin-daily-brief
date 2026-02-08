@@ -3,7 +3,8 @@ import sys
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
-    log_fetch, get_fetch_log, fetch_feed_batched, main, BATCH_SIZE, DEFAULT_LIMIT,
+    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched, main,
+    BATCH_SIZE, DEFAULT_LIMIT,
 )
 
 
@@ -285,6 +286,37 @@ class TestFetchFeedBatched:
         posts = fetch_feed_batched(fake_get_feed_posts, limit=200)
         assert len(calls) == 2
         assert len(posts) == 50
+
+
+class TestFetchFeedCookies:
+    def test_strips_existing_quotes_from_jsessionid(self, monkeypatch):
+        """JSESSIONID must be wrapped in exactly one layer of quotes."""
+        captured = {}
+
+        def fake_init(self, email, password, cookies=None):
+            captured["cookies"] = cookies
+
+        monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
+        monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
+
+        # Value already has quotes (as it would from a .env file)
+        fetch_feed('"ajax:123456"', "some-li-at", limit=1)
+        jsessionid_val = captured["cookies"]["JSESSIONID"]
+        assert jsessionid_val == '"ajax:123456"'
+        assert '""' not in jsessionid_val
+
+    def test_adds_quotes_when_missing(self, monkeypatch):
+        captured = {}
+
+        def fake_init(self, email, password, cookies=None):
+            captured["cookies"] = cookies
+
+        monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
+        monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
+
+        fetch_feed("ajax:123456", "some-li-at", limit=1)
+        jsessionid_val = captured["cookies"]["JSESSIONID"]
+        assert jsessionid_val == '"ajax:123456"'
 
 
 def _seed_posts(db, count=3):

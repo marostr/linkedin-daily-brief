@@ -178,6 +178,7 @@ def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT):
 def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
     """Authenticate via cookies and return feed posts in batches."""
     jar = RequestsCookieJar()
+    jsessionid = jsessionid.strip('"')
     jar.set("JSESSIONID", f'"{jsessionid}"', domain=".linkedin.com")
     jar.set("li_at", li_at, domain=".linkedin.com")
 
