@@ -1,10 +1,11 @@
 import sqlite3
 import sys
+import pytest
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
-    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched, main,
-    BATCH_SIZE, DEFAULT_LIMIT,
+    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched, check_cookies,
+    main, BATCH_SIZE, DEFAULT_LIMIT,
 )
 
 
@@ -287,6 +288,69 @@ class TestFetchFeedBatched:
         assert len(calls) == 2
         assert len(posts) == 50
 
+    def test_retries_once_on_failure_then_succeeds(self):
+        calls = []
+        fail_once = [True]
+
+        def fake_get_feed_posts(limit, offset, exclude_promoted_posts=True):
+            calls.append({"limit": limit, "offset": offset})
+            if offset == 0 and fail_once[0]:
+                fail_once[0] = False
+                raise ConnectionError("network blip")
+            return [{"url": f"https://linkedin.com/feed/update/urn:li:activity:{offset + i}",
+                      "author_name": f"A{offset + i}", "author_profile": "",
+                      "content": f"P{offset + i}", "old": "1h"}
+                     for i in range(limit)]
+
+        posts = fetch_feed_batched(fake_get_feed_posts, limit=50, retry_delay=0)
+        assert len(posts) == 50
+        # first call failed, retry succeeded
+        assert len(calls) == 2
+        assert calls[0]["offset"] == 0
+        assert calls[1]["offset"] == 0
+
+    def test_returns_partial_results_on_persistent_failure(self, capsys):
+        calls = []
+
+        def fake_get_feed_posts(limit, offset, exclude_promoted_posts=True):
+            calls.append({"limit": limit, "offset": offset})
+            if offset >= 50:
+                raise ConnectionError("server down")
+            return [{"url": f"https://linkedin.com/feed/update/urn:li:activity:{offset + i}",
+                      "author_name": f"A{offset + i}", "author_profile": "",
+                      "content": f"P{offset + i}", "old": "1h"}
+                     for i in range(limit)]
+
+        posts = fetch_feed_batched(fake_get_feed_posts, limit=200, retry_delay=0)
+        assert len(posts) == 50  # first batch succeeded, second failed
+        err = capsys.readouterr().err
+        assert "server down" in err
+
+
+class TestCheckCookies:
+    def test_passes_when_profile_returned(self):
+        class FakeApi:
+            def get_user_profile(self, use_cache=False):
+                return {"firstName": "Marcin"}
+
+        check_cookies(FakeApi())  # should not raise
+
+    def test_raises_when_profile_empty(self):
+        class FakeApi:
+            def get_user_profile(self, use_cache=False):
+                return {}
+
+        with pytest.raises(SystemExit):
+            check_cookies(FakeApi())
+
+    def test_raises_when_api_throws(self):
+        class FakeApi:
+            def get_user_profile(self, use_cache=False):
+                raise Exception("connection refused")
+
+        with pytest.raises(SystemExit):
+            check_cookies(FakeApi())
+
 
 class TestFetchFeedCookies:
     def test_strips_existing_quotes_from_jsessionid(self, monkeypatch):
@@ -297,6 +361,7 @@ class TestFetchFeedCookies:
             captured["cookies"] = cookies
 
         monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
+        monkeypatch.setattr("linkedin_feed.check_cookies", lambda api: None)
         monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
 
         # Value already has quotes (as it would from a .env file)
@@ -312,6 +377,7 @@ class TestFetchFeedCookies:
             captured["cookies"] = cookies
 
         monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
+        monkeypatch.setattr("linkedin_feed.check_cookies", lambda api: None)
         monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
 
         fetch_feed("ajax:123456", "some-li-at", limit=1)

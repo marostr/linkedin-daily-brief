@@ -5,6 +5,7 @@ import os
 import re
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 
 from linkedin_api import Linkedin
@@ -156,23 +157,49 @@ def get_fetch_log(db_path=DEFAULT_DB_PATH):
     return [dict(row) for row in rows]
 
 
-def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT):
+RETRY_DELAY = 3
+
+
+def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT, retry_delay=RETRY_DELAY):
     """Fetch feed posts in batches of BATCH_SIZE.
 
     Accepts a callable (e.g. api.get_feed_posts) to allow testing
     without hitting the real API. Stops when the API returns zero posts.
+    Retries once per batch on failure; returns partial results if retry fails.
     """
     all_posts = []
     offset = 0
 
     while len(all_posts) < limit:
-        batch = get_feed_posts_fn(limit=BATCH_SIZE, offset=offset)
+        try:
+            batch = get_feed_posts_fn(limit=BATCH_SIZE, offset=offset)
+        except Exception:
+            try:
+                time.sleep(retry_delay)
+                batch = get_feed_posts_fn(limit=BATCH_SIZE, offset=offset)
+            except Exception as exc:
+                print(f"Batch at offset {offset} failed after retry: {exc}", file=sys.stderr)
+                break
         if not batch:
             break
         all_posts.extend(batch)
         offset += BATCH_SIZE
 
     return all_posts[:limit]
+
+
+def check_cookies(api):
+    """Verify cookies are valid by hitting the /me endpoint. Exits on failure."""
+    try:
+        profile = api.get_user_profile(use_cache=False)
+        if not profile:
+            print("Cookie check failed — JSESSIONID or li_at may be expired.", file=sys.stderr)
+            sys.exit(1)
+    except SystemExit:
+        raise
+    except Exception as exc:
+        print(f"Cookie check failed: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
@@ -183,6 +210,7 @@ def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
     jar.set("li_at", li_at, domain=".linkedin.com")
 
     api = Linkedin("", "", cookies=jar)
+    check_cookies(api)
     return fetch_feed_batched(api.get_feed_posts, limit=limit)
 
 
