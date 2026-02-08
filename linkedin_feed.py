@@ -66,6 +66,14 @@ def init_db(db_path=DEFAULT_DB_PATH):
             processed INTEGER NOT NULL DEFAULT 0
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS fetches (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT NOT NULL,
+            fetched INTEGER NOT NULL,
+            inserted INTEGER NOT NULL
+        )
+    """)
     conn.commit()
     conn.close()
 
@@ -124,6 +132,28 @@ def mark_processed(db_path, urls):
     conn.close()
 
 
+def log_fetch(db_path, fetched, inserted):
+    """Record a fetch operation in the audit log."""
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO fetches (started_at, fetched, inserted) VALUES (?, ?, ?)",
+        (datetime.now(timezone.utc).isoformat(), fetched, inserted),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_fetch_log(db_path=DEFAULT_DB_PATH):
+    """Return the fetch audit log, most recent first."""
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT started_at, fetched, inserted FROM fetches ORDER BY id DESC"
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def fetch_feed(jsessionid, li_at, limit=200):
     """Authenticate via cookies and return feed posts."""
     jar = RequestsCookieJar()
@@ -150,6 +180,7 @@ def main():
 
     posts = fetch_feed(jsessionid, li_at)
     new_count = store_posts(db_path, posts)
+    log_fetch(db_path, fetched=len(posts), inserted=new_count)
     unprocessed = get_unprocessed(db_path)
 
     print(json.dumps(unprocessed, indent=2, ensure_ascii=False))

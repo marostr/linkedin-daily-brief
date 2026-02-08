@@ -2,6 +2,7 @@ import sqlite3
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
+    log_fetch, get_fetch_log,
 )
 
 
@@ -190,3 +191,35 @@ class TestMarkProcessed:
         init_db(db)
         mark_processed(db, ["https://linkedin.com/feed/update/urn:li:activity:999"])
         # no error raised
+
+
+class TestFetchAudit:
+    def test_logs_a_fetch(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        log_fetch(db, fetched=150, inserted=42)
+        log = get_fetch_log(db)
+        assert len(log) == 1
+        assert log[0]["fetched"] == 150
+        assert log[0]["inserted"] == 42
+        assert log[0]["started_at"] is not None
+
+    def test_logs_multiple_fetches_in_order(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        log_fetch(db, fetched=100, inserted=100)
+        log_fetch(db, fetched=100, inserted=20)
+        log = get_fetch_log(db)
+        assert len(log) == 2
+        # most recent first
+        assert log[0]["inserted"] == 20
+        assert log[1]["inserted"] == 100
+
+    def test_init_db_creates_fetches_table(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        conn = sqlite3.connect(db)
+        tables = [r[0] for r in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+        conn.close()
+        assert "fetches" in tables
