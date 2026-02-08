@@ -199,6 +199,10 @@ def main():
 
     subparsers.add_parser("unprocessed", help="Show unprocessed posts as JSON")
 
+    mark_parser = subparsers.add_parser("mark-processed", help="Mark posts as processed")
+    mark_parser.add_argument("urls", nargs="*", help="URLs to mark as processed")
+    mark_parser.add_argument("--all", action="store_true", help="Mark all unprocessed posts")
+
     args = parser.parse_args()
     db_path = os.environ.get("LINKEDIN_DB_PATH", DEFAULT_DB_PATH)
     init_db(db_path)
@@ -226,6 +230,14 @@ def main():
     elif args.command == "unprocessed":
         posts = get_unprocessed(db_path)
         print(json.dumps(posts, indent=2, ensure_ascii=False))
+
+    elif args.command == "mark-processed":
+        if getattr(args, "all"):
+            urls = [p["url"] for p in get_unprocessed(db_path)]
+        else:
+            urls = args.urls
+        mark_processed(db_path, urls)
+        print(f"Marked {len(urls)} post(s) as processed.")
 
 
 if __name__ == "__main__":

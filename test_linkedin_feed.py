@@ -1,8 +1,9 @@
 import sqlite3
+import sys
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
-    log_fetch, get_fetch_log, fetch_feed_batched, BATCH_SIZE, DEFAULT_LIMIT,
+    log_fetch, get_fetch_log, fetch_feed_batched, main, BATCH_SIZE, DEFAULT_LIMIT,
 )
 
 
@@ -284,3 +285,62 @@ class TestFetchFeedBatched:
         posts = fetch_feed_batched(fake_get_feed_posts, limit=200)
         assert len(calls) == 2
         assert len(posts) == 50
+
+
+def _seed_posts(db, count=3):
+    """Insert test posts and return their URLs."""
+    posts = [
+        {"url": f"https://linkedin.com/feed/update/urn:li:activity:{i}",
+         "author_name": f"Author{i}", "author_profile": "", "content": f"Post {i}", "old": "1h"}
+        for i in range(count)
+    ]
+    store_posts(db, posts)
+    return [p["url"] for p in posts]
+
+
+class TestMarkProcessedCLI:
+    def test_marks_specific_urls(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        urls = _seed_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "mark-processed", urls[0], urls[1],
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        assert "Marked 2" in out
+
+        unprocessed = get_unprocessed(db)
+        assert len(unprocessed) == 1
+        assert unprocessed[0]["url"] == urls[2]
+
+    def test_marks_all_unprocessed(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "mark-processed", "--all",
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        assert "Marked 3" in out
+        assert get_unprocessed(db) == []
+
+    def test_all_flag_with_no_unprocessed(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "mark-processed", "--all",
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        assert "Marked 0" in out
