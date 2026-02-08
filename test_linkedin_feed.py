@@ -1,10 +1,9 @@
 import sqlite3
 import sys
-import pytest
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
-    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched, check_cookies,
+    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched,
     main, BATCH_SIZE, DEFAULT_LIMIT,
 )
 
@@ -327,31 +326,6 @@ class TestFetchFeedBatched:
         assert "server down" in err
 
 
-class TestCheckCookies:
-    def test_passes_when_profile_returned(self):
-        class FakeApi:
-            def get_user_profile(self, use_cache=False):
-                return {"firstName": "Marcin"}
-
-        check_cookies(FakeApi())  # should not raise
-
-    def test_raises_when_profile_empty(self):
-        class FakeApi:
-            def get_user_profile(self, use_cache=False):
-                return {}
-
-        with pytest.raises(SystemExit):
-            check_cookies(FakeApi())
-
-    def test_raises_when_api_throws(self):
-        class FakeApi:
-            def get_user_profile(self, use_cache=False):
-                raise Exception("connection refused")
-
-        with pytest.raises(SystemExit):
-            check_cookies(FakeApi())
-
-
 class TestFetchFeedCookies:
     def test_strips_existing_quotes_from_jsessionid(self, monkeypatch):
         """JSESSIONID must be wrapped in exactly one layer of quotes."""
@@ -361,7 +335,7 @@ class TestFetchFeedCookies:
             captured["cookies"] = cookies
 
         monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
-        monkeypatch.setattr("linkedin_feed.check_cookies", lambda api: None)
+
         monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
 
         # Value already has quotes (as it would from a .env file)
@@ -377,7 +351,7 @@ class TestFetchFeedCookies:
             captured["cookies"] = cookies
 
         monkeypatch.setattr("linkedin_feed.Linkedin.__init__", fake_init)
-        monkeypatch.setattr("linkedin_feed.check_cookies", lambda api: None)
+
         monkeypatch.setattr("linkedin_feed.fetch_feed_batched", lambda fn, limit: [])
 
         fetch_feed("ajax:123456", "some-li-at", limit=1)

@@ -188,24 +188,6 @@ def fetch_feed_batched(get_feed_posts_fn, limit=DEFAULT_LIMIT, retry_delay=RETRY
     return all_posts[:limit]
 
 
-def check_cookies(api):
-    """Verify cookies are valid by hitting the /me endpoint. Exits on failure."""
-    try:
-        profile = api.get_user_profile(use_cache=False)
-        if not profile:
-            print("Cookie check failed — JSESSIONID or li_at may be expired.", file=sys.stderr)
-            sys.exit(1)
-    except SystemExit:
-        raise
-    except Exception as exc:
-        print(
-            f"Cookie check failed ({type(exc).__name__}). "
-            "JSESSIONID or li_at may be expired.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-
 def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
     """Authenticate via cookies and return feed posts in batches."""
     jar = RequestsCookieJar()
@@ -214,7 +196,6 @@ def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
     jar.set("li_at", li_at, domain=".linkedin.com")
 
     api = Linkedin("", "", cookies=jar)
-    check_cookies(api)
     return fetch_feed_batched(api.get_feed_posts, limit=limit)
 
 
