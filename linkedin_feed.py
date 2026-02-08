@@ -215,11 +215,9 @@ def main():
     log_fetch(db_path, fetched=len(posts), inserted=new_count)
     unprocessed = get_unprocessed(db_path)
 
-    print(json.dumps(unprocessed, indent=2, ensure_ascii=False))
-    print(
-        f"\n--- {new_count} new / {len(unprocessed)} unprocessed / {len(posts)} fetched ---",
-        file=sys.stderr,
-    )
+    print(f"Fetched:      {len(posts)}")
+    print(f"New:          {new_count}")
+    print(f"Unprocessed:  {len(unprocessed)}")
 
 
 if __name__ == "__main__":
