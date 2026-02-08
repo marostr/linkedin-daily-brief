@@ -57,8 +57,10 @@ def extract_linkedin_cookies():
     key = get_encryption_key()
 
     # Copy DB to avoid locking issues with open browser
-    tmp = tempfile.mktemp(suffix=".db")
+    fd, tmp = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
     shutil.copy2(BRAVE_COOKIE_DB, tmp)
+    os.chmod(tmp, 0o600)
 
     try:
         conn = sqlite3.connect(tmp)

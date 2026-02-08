@@ -198,7 +198,11 @@ def check_cookies(api):
     except SystemExit:
         raise
     except Exception as exc:
-        print(f"Cookie check failed: {exc}", file=sys.stderr)
+        print(
+            f"Cookie check failed ({type(exc).__name__}). "
+            "JSESSIONID or li_at may be expired.",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
