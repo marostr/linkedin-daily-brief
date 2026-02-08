@@ -188,34 +188,44 @@ def fetch_feed(jsessionid, li_at, limit=DEFAULT_LIMIT):
 def main():
     import argparse
 
-    parser = argparse.ArgumentParser(description="Fetch LinkedIn feed posts")
-    parser.add_argument(
+    parser = argparse.ArgumentParser(description="LinkedIn feed tool")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    fetch_parser = subparsers.add_parser("fetch", help="Fetch posts from LinkedIn")
+    fetch_parser.add_argument(
         "limit", nargs="?", type=int, default=DEFAULT_LIMIT,
         help=f"Number of posts to fetch (default: {DEFAULT_LIMIT})",
     )
+
+    subparsers.add_parser("unprocessed", help="Show unprocessed posts as JSON")
+
     args = parser.parse_args()
-
-    jsessionid = os.environ.get("LINKEDIN_JSESSIONID")
-    li_at = os.environ.get("LINKEDIN_LI_AT")
-
-    if not jsessionid or not li_at:
-        print(
-            "Set LINKEDIN_JSESSIONID and LINKEDIN_LI_AT environment variables.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     db_path = os.environ.get("LINKEDIN_DB_PATH", DEFAULT_DB_PATH)
     init_db(db_path)
 
-    posts = fetch_feed(jsessionid, li_at, limit=args.limit)
-    new_count = store_posts(db_path, posts)
-    log_fetch(db_path, fetched=len(posts), inserted=new_count)
-    unprocessed = get_unprocessed(db_path)
+    if args.command == "fetch":
+        jsessionid = os.environ.get("LINKEDIN_JSESSIONID")
+        li_at = os.environ.get("LINKEDIN_LI_AT")
 
-    print(f"Fetched:      {len(posts)}")
-    print(f"New:          {new_count}")
-    print(f"Unprocessed:  {len(unprocessed)}")
+        if not jsessionid or not li_at:
+            print(
+                "Set LINKEDIN_JSESSIONID and LINKEDIN_LI_AT environment variables.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+
+        posts = fetch_feed(jsessionid, li_at, limit=args.limit)
+        new_count = store_posts(db_path, posts)
+        log_fetch(db_path, fetched=len(posts), inserted=new_count)
+        unprocessed = get_unprocessed(db_path)
+
+        print(f"Fetched:      {len(posts)}")
+        print(f"New:          {new_count}")
+        print(f"Unprocessed:  {len(unprocessed)}")
+
+    elif args.command == "unprocessed":
+        posts = get_unprocessed(db_path)
+        print(json.dumps(posts, indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":
