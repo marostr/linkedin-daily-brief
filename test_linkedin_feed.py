@@ -1,9 +1,10 @@
+import json
 import sqlite3
 import sys
 from datetime import datetime, timezone, timedelta
 from linkedin_feed import (
     init_db, store_posts, get_unprocessed, mark_processed, estimate_posted_at,
-    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched,
+    log_fetch, get_fetch_log, fetch_feed, fetch_feed_batched, get_posts,
     main, BATCH_SIZE, DEFAULT_LIMIT,
 )
 
@@ -169,6 +170,97 @@ class TestGetUnprocessed:
         store_posts(db, posts)
         mark_processed(db, ["https://linkedin.com/feed/update/urn:li:activity:1"])
         assert get_unprocessed(db) == []
+
+
+def _seed_dated_posts(db):
+    """Insert posts with known posted_at timestamps for date filtering tests."""
+    conn = sqlite3.connect(db)
+    now_iso = datetime(2026, 2, 8, 12, 0, 0, tzinfo=timezone.utc).isoformat()
+    posts = [
+        ("https://linkedin.com/post/1", "Alice", "", "Old post",
+         datetime(2026, 1, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat(), now_iso, 0),
+        ("https://linkedin.com/post/2", "Bob", "", "Mid post",
+         datetime(2026, 1, 15, 10, 0, 0, tzinfo=timezone.utc).isoformat(), now_iso, 1),
+        ("https://linkedin.com/post/3", "Carol", "", "Recent post",
+         datetime(2026, 2, 1, 10, 0, 0, tzinfo=timezone.utc).isoformat(), now_iso, 0),
+        ("https://linkedin.com/post/4", "Dave", "", "No date",
+         None, now_iso, 0),
+    ]
+    conn.executemany(
+        "INSERT INTO posts (url, author_name, author_profile, content, posted_at, fetched_at, processed) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)", posts,
+    )
+    conn.commit()
+    conn.close()
+
+
+class TestGetPosts:
+    def test_no_filters_returns_all_posts_with_dates(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        posts = get_posts(db)
+        # posts without posted_at are excluded
+        assert len(posts) == 3
+        urls = [p["url"] for p in posts]
+        assert "https://linkedin.com/post/4" not in urls
+
+    def test_after_filters_posts(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        after = datetime(2026, 1, 10, 0, 0, 0, tzinfo=timezone.utc)
+        posts = get_posts(db, after=after)
+        assert len(posts) == 2
+        urls = [p["url"] for p in posts]
+        assert "https://linkedin.com/post/2" in urls
+        assert "https://linkedin.com/post/3" in urls
+
+    def test_before_filters_posts(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        before = datetime(2026, 1, 20, 0, 0, 0, tzinfo=timezone.utc)
+        posts = get_posts(db, before=before)
+        assert len(posts) == 2
+        urls = [p["url"] for p in posts]
+        assert "https://linkedin.com/post/1" in urls
+        assert "https://linkedin.com/post/2" in urls
+
+    def test_after_and_before_combined(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        after = datetime(2026, 1, 10, 0, 0, 0, tzinfo=timezone.utc)
+        before = datetime(2026, 1, 20, 0, 0, 0, tzinfo=timezone.utc)
+        posts = get_posts(db, after=after, before=before)
+        assert len(posts) == 1
+        assert posts[0]["url"] == "https://linkedin.com/post/2"
+
+    def test_includes_both_processed_and_unprocessed(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        posts = get_posts(db)
+        processed_flags = {p["url"]: p["processed"] for p in posts}
+        assert processed_flags["https://linkedin.com/post/2"] == 1
+        assert processed_flags["https://linkedin.com/post/1"] == 0
+
+    def test_returns_empty_when_no_matches(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        after = datetime(2026, 3, 1, 0, 0, 0, tzinfo=timezone.utc)
+        posts = get_posts(db, after=after)
+        assert posts == []
+
+    def test_ordered_by_posted_at(self, tmp_path):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+        posts = get_posts(db)
+        dates = [p["posted_at"] for p in posts]
+        assert dates == sorted(dates)
 
 
 class TestMarkProcessed:
@@ -416,3 +508,64 @@ class TestMarkProcessedCLI:
 
         out = capsys.readouterr().out
         assert "Marked 0" in out
+
+
+class TestPostsCLI:
+    def test_no_filters_outputs_json(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", ["linkedin_feed.py", "posts"])
+        main()
+
+        out = capsys.readouterr().out
+        posts = json.loads(out)
+        assert len(posts) == 3
+
+    def test_after_flag(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "posts", "--after", "2026-01-10",
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        posts = json.loads(out)
+        assert len(posts) == 2
+
+    def test_before_flag(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "posts", "--before", "2026-01-20",
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        posts = json.loads(out)
+        assert len(posts) == 2
+
+    def test_both_flags(self, tmp_path, monkeypatch, capsys):
+        db = str(tmp_path / "test.db")
+        init_db(db)
+        _seed_dated_posts(db)
+
+        monkeypatch.setenv("LINKEDIN_DB_PATH", db)
+        monkeypatch.setattr(sys, "argv", [
+            "linkedin_feed.py", "posts", "--after", "2026-01-10", "--before", "2026-01-20",
+        ])
+        main()
+
+        out = capsys.readouterr().out
+        posts = json.loads(out)
+        assert len(posts) == 1
+        assert posts[0]["url"] == "https://linkedin.com/post/2"

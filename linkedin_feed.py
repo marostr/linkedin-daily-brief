@@ -124,6 +124,33 @@ def get_unprocessed(db_path=DEFAULT_DB_PATH):
     return [dict(row) for row in rows]
 
 
+def get_posts(db_path=DEFAULT_DB_PATH, after=None, before=None):
+    """Return posts filtered by posted_at date range.
+
+    Both processed and unprocessed posts are included.
+    Posts without a posted_at value are excluded.
+    Results ordered by posted_at ascending.
+    """
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+    clauses = ["posted_at IS NOT NULL"]
+    params = []
+    if after is not None:
+        clauses.append("posted_at > ?")
+        params.append(after.isoformat())
+    if before is not None:
+        clauses.append("posted_at < ?")
+        params.append(before.isoformat())
+    where = " AND ".join(clauses)
+    rows = conn.execute(
+        f"SELECT url, author_name, author_profile, content, posted_at, fetched_at, processed "
+        f"FROM posts WHERE {where} ORDER BY posted_at",
+        params,
+    ).fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
 def mark_processed(db_path, urls):
     """Mark posts as processed by their URLs."""
     conn = sqlite3.connect(db_path)
@@ -217,6 +244,10 @@ def main():
     mark_parser.add_argument("urls", nargs="*", help="URLs to mark as processed")
     mark_parser.add_argument("--all", action="store_true", help="Mark all unprocessed posts")
 
+    posts_parser = subparsers.add_parser("posts", help="Show posts filtered by date as JSON")
+    posts_parser.add_argument("--after", help="Only posts after this date (ISO 8601)")
+    posts_parser.add_argument("--before", help="Only posts before this date (ISO 8601)")
+
     args = parser.parse_args()
     db_path = os.environ.get("LINKEDIN_DB_PATH", DEFAULT_DB_PATH)
     init_db(db_path)
@@ -243,6 +274,12 @@ def main():
 
     elif args.command == "unprocessed":
         posts = get_unprocessed(db_path)
+        print(json.dumps(posts, indent=2, ensure_ascii=False))
+
+    elif args.command == "posts":
+        after = datetime.fromisoformat(args.after) if args.after else None
+        before = datetime.fromisoformat(args.before) if args.before else None
+        posts = get_posts(db_path, after=after, before=before)
         print(json.dumps(posts, indent=2, ensure_ascii=False))
 
     elif args.command == "mark-processed":
